@@ -45,6 +45,32 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+// -------- ROUTE SANTÉ / HEALTH --------
+app.get("/api/health", (req, res) => {
+  const requestId = Date.now().toString(36);
+  console.log(`\n[HEALTH][${requestId}] Requête santé reçue sur /api/health`);
+  const payload = {
+    status: "ok",
+    message: "API contact/newsletter opérationnelle",
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  };
+  console.log(`[HEALTH][${requestId}] Réponse:`, payload);
+  return res.status(200).json(payload);
+});
+
+// Optionnel : point d’entrée /api simple
+app.get("/api", (req, res) => {
+  const requestId = Date.now().toString(36);
+  console.log(`\n[HEALTH][${requestId}] Requête reçue sur /api`);
+  const payload = {
+    status: "ok",
+    message: "API contact/newsletter – point d’entrée",
+  };
+  console.log(`[HEALTH][${requestId}] Réponse:`, payload);
+  return res.status(200).json(payload);
+});
+
 // -------- ROUTE CONTACT --------
 app.post("/api/contact", async (req, res) => {
   const requestId = Date.now().toString(36);
@@ -198,10 +224,7 @@ app.post("/api/contact", async (req, res) => {
       </div>
     `;
 
-    console.log(
-      `[CONTACT][${requestId}] Envoi email VISITEUR vers:`,
-      email
-    );
+    console.log(`[CONTACT][${requestId}] Envoi email VISITEUR vers:`, email);
     await transporter.sendMail({
       from: `"${FROM_NAME || "Portfolio Gracia"}" <${FROM_EMAIL || SMTP_USER}>`,
       to: email,
