@@ -6,7 +6,7 @@ const nodemailer = require("nodemailer");
 const app = express();
 
 // Middleware
-app.use(cors({ origin: "*" })); // ouvert à tous les domaines
+app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const {
@@ -15,6 +15,7 @@ const {
   SMTP_USER,
   SMTP_PASS,
   ADMIN_MAILS,
+  MAIL_FROM,   // tu utiliseras ça comme from principal
   FROM_EMAIL,
   FROM_NAME,
   PORT,
@@ -25,6 +26,7 @@ console.log("SMTP_HOST:", SMTP_HOST || "<vide>");
 console.log("SMTP_PORT:", SMTP_PORT || "<vide>");
 console.log("SMTP_USER:", SMTP_USER ? "***" : "<vide>");
 console.log("ADMIN_MAILS:", ADMIN_MAILS || "<vide>");
+console.log("MAIL_FROM:", MAIL_FROM || "<vide>");
 console.log("FROM_EMAIL:", FROM_EMAIL || "<vide>");
 console.log("FROM_NAME:", FROM_NAME || "<vide>");
 console.log("=======================");
@@ -45,7 +47,7 @@ const transporter = nodemailer.createTransport({
   },
 });
 
-// -------- ROUTE SANTÉ / HEALTH --------
+// -------- HEALTH --------
 app.get("/api/health", (req, res) => {
   const requestId = Date.now().toString(36);
   console.log(`\n[HEALTH][${requestId}] Requête santé reçue sur /api/health`);
@@ -59,7 +61,6 @@ app.get("/api/health", (req, res) => {
   return res.status(200).json(payload);
 });
 
-// Optionnel : point d’entrée /api simple
 app.get("/api", (req, res) => {
   const requestId = Date.now().toString(36);
   console.log(`\n[HEALTH][${requestId}] Requête reçue sur /api`);
@@ -71,27 +72,27 @@ app.get("/api", (req, res) => {
   return res.status(200).json(payload);
 });
 
-// -------- ROUTE CONTACT --------
+// -------- CONTACT --------
 app.post("/api/contact", async (req, res) => {
   const requestId = Date.now().toString(36);
   console.log(`\n[CONTACT][${requestId}] Requête reçue`);
   console.log(`[CONTACT][${requestId}] Body:`, req.body);
 
   try {
-    // On récupère les champs possibles
+    // FRONT ENVOIE : name, email, phone, subject, message, newsletter
     const {
-      nom,
-      prenom,
+      name,
       email,
-      type,
+      phone,
+      subject,
       message,
       newsletter,
-      name,
-      subject,
-      phone,
+      type,   // au cas où tu continues à l’utiliser
+      nom,
+      prenom,
     } = req.body || {};
 
-    // Mapping name -> nom/prenom si besoin
+    // Mapping vers finalNom / finalPrenom
     let finalNom = nom;
     let finalPrenom = prenom;
 
@@ -100,6 +101,16 @@ app.post("/api/contact", async (req, res) => {
       finalPrenom = finalPrenom || parts[0] || "";
       finalNom = finalNom || parts.slice(1).join(" ") || "";
     }
+
+    console.log(`[CONTACT][${requestId}] Champs mappés:`, {
+      finalNom,
+      finalPrenom,
+      email,
+      phone,
+      subject,
+      type,
+      newsletter,
+    });
 
     console.log(`[CONTACT][${requestId}] Validation des champs…`);
     if (!finalNom || !finalPrenom || !email || !message) {
@@ -127,6 +138,11 @@ app.post("/api/contact", async (req, res) => {
       .filter(Boolean);
     console.log(`[CONTACT][${requestId}] Liste admins:`, adminList);
 
+    const fromAddress =
+      MAIL_FROM ||
+      (FROM_EMAIL && FROM_NAME ? `"${FROM_NAME}" <${FROM_EMAIL}>` : SMTP_USER);
+
+    // Email ADMIN
     const ownerHtml = `
       <div style="margin:0;padding:24px;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
         <div style="max-width:640px;margin:0 auto;background:#0b1120;border-radius:16px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,0.6);border:1px solid #1f2937;">
@@ -188,7 +204,7 @@ app.post("/api/contact", async (req, res) => {
         adminList.join(", ")
       );
       await transporter.sendMail({
-        from: `"${FROM_NAME || "Portfolio Gracia"}" <${FROM_EMAIL || SMTP_USER}>`,
+        from: fromAddress,
         to: adminList,
         subject: "Nouvelle demande de contact - Portfolio Gracia",
         html: ownerHtml,
@@ -200,6 +216,7 @@ app.post("/api/contact", async (req, res) => {
       );
     }
 
+    // Email VISITEUR
     const visitorHtml = `
       <div style="margin:0;padding:24px;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
         <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 18px 45px rgba(15,23,42,0.22);border:1px solid #e5e7eb;">
@@ -266,14 +283,14 @@ app.post("/api/contact", async (req, res) => {
 
     console.log(`[CONTACT][${requestId}] Envoi email VISITEUR vers:`, email);
     await transporter.sendMail({
-      from: `"${FROM_NAME || "Portfolio Gracia"}" <${FROM_EMAIL || SMTP_USER}>`,
+      from: fromAddress,
       to: email,
       subject: "Votre demande a bien été reçue",
       html: visitorHtml,
     });
     console.log(`[CONTACT][${requestId}] Email VISITEUR envoyé avec succès`);
 
-    // Si newsletter cochée, envoyer un email newsletter aux admins
+    // Newsletter via contact
     if (newsletter) {
       console.log(
         `[CONTACT][${requestId}] Newsletter cochée, envoi info newsletter aux admins…`
@@ -307,7 +324,7 @@ app.post("/api/contact", async (req, res) => {
 
       if (adminList.length > 0) {
         await transporter.sendMail({
-          from: `"${FROM_NAME || "Portfolio Gracia"}" <${FROM_EMAIL || SMTP_USER}>`,
+          from: fromAddress,
           to: adminList,
           subject: "Newsletter (via contact) - Portfolio Gracia",
           html: newsletterHtml,
@@ -329,7 +346,7 @@ app.post("/api/contact", async (req, res) => {
   }
 });
 
-// -------- ROUTE NEWSLETTER --------
+// -------- NEWSLETTER --------
 app.post("/api/newsletter", async (req, res) => {
   const requestId = Date.now().toString(36);
   console.log(`\n[NEWSLETTER][${requestId}] Requête reçue`);
@@ -363,6 +380,10 @@ app.post("/api/newsletter", async (req, res) => {
       .filter(Boolean);
     console.log(`[NEWSLETTER][${requestId}] Liste admins:`, adminList);
 
+    const fromAddress =
+      MAIL_FROM ||
+      (FROM_EMAIL && FROM_NAME ? `"${FROM_NAME}" <${FROM_EMAIL}>` : SMTP_USER);
+
     const html = `
       <div style="margin:0;padding:24px;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
         <div style="max-width:520px;margin:0 auto;background:#020617;border-radius:16px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,0.6);border:1px solid #1f2937;">
@@ -392,7 +413,7 @@ app.post("/api/newsletter", async (req, res) => {
         adminList.join(", ")
       );
       await transporter.sendMail({
-        from: `"${FROM_NAME || "Portfolio Gracia"}" <${FROM_EMAIL || SMTP_USER}>`,
+        from: fromAddress,
         to: adminList,
         subject: "Nouvelle inscription newsletter - Portfolio Gracia",
         html,
