@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const nodemailer = require("nodemailer");
+const fetch = require("node-fetch"); // npm i node-fetch@2
 
 const app = express();
 
@@ -10,42 +10,76 @@ app.use(cors({ origin: "*" }));
 app.use(express.json());
 
 const {
-  SMTP_HOST,
-  SMTP_PORT,
-  SMTP_USER,
-  SMTP_PASS,
+  BREVO_API_KEY,
   ADMIN_MAILS,
-  MAIL_FROM,   // tu utiliseras ça comme from principal
+  MAIL_FROM,
   FROM_EMAIL,
   FROM_NAME,
   PORT,
 } = process.env;
 
 console.log("=== CONFIG BACKEND ===");
-console.log("SMTP_HOST:", SMTP_HOST || "<vide>");
-console.log("SMTP_PORT:", SMTP_PORT || "<vide>");
-console.log("SMTP_USER:", SMTP_USER ? "***" : "<vide>");
+console.log("BREVO_API_KEY:", BREVO_API_KEY ? "***" : "<vide>");
 console.log("ADMIN_MAILS:", ADMIN_MAILS || "<vide>");
 console.log("MAIL_FROM:", MAIL_FROM || "<vide>");
 console.log("FROM_EMAIL:", FROM_EMAIL || "<vide>");
 console.log("FROM_NAME:", FROM_NAME || "<vide>");
 console.log("=======================");
 
-if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !ADMIN_MAILS) {
+if (!BREVO_API_KEY || !ADMIN_MAILS) {
   console.warn(
-    "⚠️ Variables SMTP / ADMIN_MAILS manquantes. Les routes mail renverront 500."
+    "⚠️ BREVO_API_KEY ou ADMIN_MAILS manquant. Les routes mail renverront 500."
   );
 }
 
-const transporter = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: Number(SMTP_PORT),
-  secure: false,
-  auth: {
-    user: SMTP_USER,
-    pass: SMTP_PASS,
-  },
-});
+// --------- util: format from + envoi Brevo HTTP ---------
+function getSender() {
+  const from = MAIL_FROM || (FROM_EMAIL && FROM_NAME
+    ? `"${FROM_NAME}" <${FROM_EMAIL}>`
+    : FROM_EMAIL || "no-reply@example.com");
+
+  const name = from.split("<")[0].replace(/"/g, "").trim();
+  const email = from.match(/<(.*)>/)?.[1] || from.trim();
+
+  return { name, email };
+}
+
+async function sendBrevoEmail({ to, subject, html, requestId, tag }) {
+  const sender = getSender();
+  console.log(
+    `[BREVO][${requestId}] Envoi HTTP API vers: ${to.join(
+      ", "
+    )} | subject="${subject}" | tag=${tag || "-"}`
+  );
+
+  const res = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "api-key": BREVO_API_KEY,
+    },
+    body: JSON.stringify({
+      sender,
+      to: to.map((email) => ({ email })),
+      subject,
+      htmlContent: html,
+      tags: tag ? [tag] : undefined,
+    }),
+  });
+
+  const text = await res.text().catch(() => "");
+  if (!res.ok) {
+    console.error(
+      `[BREVO][${requestId}] HTTP error ${res.status}: ${text || "<vide>"}`
+    );
+    throw new Error(`Brevo HTTP error ${res.status}`);
+  }
+
+  console.log(
+    `[BREVO][${requestId}] Email envoyé avec succès. Réponse brute: ${text || "<vide>"}`
+  );
+  return text;
+}
 
 // -------- HEALTH --------
 app.get("/api/health", (req, res) => {
@@ -53,7 +87,7 @@ app.get("/api/health", (req, res) => {
   console.log(`\n[HEALTH][${requestId}] Requête santé reçue sur /api/health`);
   const payload = {
     status: "ok",
-    message: "API contact/newsletter opérationnelle",
+    message: "API contact/newsletter opérationnelle (Brevo HTTP)",
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
   };
@@ -79,7 +113,6 @@ app.post("/api/contact", async (req, res) => {
   console.log(`[CONTACT][${requestId}] Body:`, req.body);
 
   try {
-    // FRONT ENVOIE : name, email, phone, subject, message, newsletter
     const {
       name,
       email,
@@ -87,12 +120,11 @@ app.post("/api/contact", async (req, res) => {
       subject,
       message,
       newsletter,
-      type,   // au cas où tu continues à l’utiliser
+      type,
       nom,
       prenom,
     } = req.body || {};
 
-    // Mapping vers finalNom / finalPrenom
     let finalNom = nom;
     let finalPrenom = prenom;
 
@@ -123,13 +155,13 @@ app.post("/api/contact", async (req, res) => {
       });
     }
 
-    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !ADMIN_MAILS) {
+    if (!BREVO_API_KEY || !ADMIN_MAILS) {
       console.error(
-        `[CONTACT][${requestId}] Config SMTP invalide ou ADMIN_MAILS manquant`
+        `[CONTACT][${requestId}] BREVO_API_KEY ou ADMIN_MAILS manquant`
       );
       return res.status(500).json({
         success: false,
-        message: "Configuration SMTP manquante côté serveur.",
+        message: "Configuration Brevo manquante côté serveur.",
       });
     }
 
@@ -138,11 +170,7 @@ app.post("/api/contact", async (req, res) => {
       .filter(Boolean);
     console.log(`[CONTACT][${requestId}] Liste admins:`, adminList);
 
-    const fromAddress =
-      MAIL_FROM ||
-      (FROM_EMAIL && FROM_NAME ? `"${FROM_NAME}" <${FROM_EMAIL}>` : SMTP_USER);
-
-    // Email ADMIN
+    // HTML pour ADMIN
     const ownerHtml = `
       <div style="margin:0;padding:24px;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
         <div style="max-width:640px;margin:0 auto;background:#0b1120;border-radius:16px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,0.6);border:1px solid #1f2937;">
@@ -198,25 +226,7 @@ app.post("/api/contact", async (req, res) => {
       </div>
     `;
 
-    if (adminList.length > 0) {
-      console.log(
-        `[CONTACT][${requestId}] Envoi email ADMIN vers:`,
-        adminList.join(", ")
-      );
-      await transporter.sendMail({
-        from: fromAddress,
-        to: adminList,
-        subject: "Nouvelle demande de contact - Portfolio Gracia",
-        html: ownerHtml,
-      });
-      console.log(`[CONTACT][${requestId}] Email ADMIN envoyé avec succès`);
-    } else {
-      console.warn(
-        `[CONTACT][${requestId}] Aucun admin dans ADMIN_MAILS, email admin non envoyé`
-      );
-    }
-
-    // Email VISITEUR
+    // HTML pour VISITEUR
     const visitorHtml = `
       <div style="margin:0;padding:24px;background-color:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
         <div style="max-width:640px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 18px 45px rgba(15,23,42,0.22);border:1px solid #e5e7eb;">
@@ -281,16 +291,31 @@ app.post("/api/contact", async (req, res) => {
       </div>
     `;
 
-    console.log(`[CONTACT][${requestId}] Envoi email VISITEUR vers:`, email);
-    await transporter.sendMail({
-      from: fromAddress,
-      to: email,
+    // Envoi ADMIN
+    if (adminList.length > 0) {
+      await sendBrevoEmail({
+        to: adminList,
+        subject: "Nouvelle demande de contact - Portfolio Gracia",
+        html: ownerHtml,
+        requestId,
+        tag: "contact-admin",
+      });
+    } else {
+      console.warn(
+        `[CONTACT][${requestId}] Aucun admin dans ADMIN_MAILS, email admin non envoyé`
+      );
+    }
+
+    // Envoi VISITEUR
+    await sendBrevoEmail({
+      to: [email],
       subject: "Votre demande a bien été reçue",
       html: visitorHtml,
+      requestId,
+      tag: "contact-visitor",
     });
-    console.log(`[CONTACT][${requestId}] Email VISITEUR envoyé avec succès`);
 
-    // Newsletter via contact
+    // Si newsletter cochée → notifier admins
     if (newsletter) {
       console.log(
         `[CONTACT][${requestId}] Newsletter cochée, envoi info newsletter aux admins…`
@@ -323,15 +348,13 @@ app.post("/api/contact", async (req, res) => {
       `;
 
       if (adminList.length > 0) {
-        await transporter.sendMail({
-          from: fromAddress,
+        await sendBrevoEmail({
           to: adminList,
           subject: "Newsletter (via contact) - Portfolio Gracia",
           html: newsletterHtml,
+          requestId,
+          tag: "newsletter-via-contact",
         });
-        console.log(
-          `[CONTACT][${requestId}] Email ADMIN newsletter (via contact) envoyé`
-        );
       }
     }
 
@@ -365,13 +388,13 @@ app.post("/api/newsletter", async (req, res) => {
         .json({ success: false, message: "Email obligatoire." });
     }
 
-    if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS || !ADMIN_MAILS) {
+    if (!BREVO_API_KEY || !ADMIN_MAILS) {
       console.error(
-        `[NEWSLETTER][${requestId}] Config SMTP invalide ou ADMIN_MAILS manquant`
+        `[NEWSLETTER][${requestId}] BREVO_API_KEY ou ADMIN_MAILS manquant`
       );
       return res.status(500).json({
         success: false,
-        message: "Configuration SMTP manquante côté serveur.",
+        message: "Configuration Brevo manquante côté serveur.",
       });
     }
 
@@ -379,10 +402,6 @@ app.post("/api/newsletter", async (req, res) => {
       .map((m) => m.trim())
       .filter(Boolean);
     console.log(`[NEWSLETTER][${requestId}] Liste admins:`, adminList);
-
-    const fromAddress =
-      MAIL_FROM ||
-      (FROM_EMAIL && FROM_NAME ? `"${FROM_NAME}" <${FROM_EMAIL}>` : SMTP_USER);
 
     const html = `
       <div style="margin:0;padding:24px;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
@@ -408,19 +427,13 @@ app.post("/api/newsletter", async (req, res) => {
     `;
 
     if (adminList.length > 0) {
-      console.log(
-        `[NEWSLETTER][${requestId}] Envoi email ADMIN newsletter vers:`,
-        adminList.join(", ")
-      );
-      await transporter.sendMail({
-        from: fromAddress,
+      await sendBrevoEmail({
         to: adminList,
         subject: "Nouvelle inscription newsletter - Portfolio Gracia",
         html,
+        requestId,
+        tag: "newsletter-admin",
       });
-      console.log(
-        `[NEWSLETTER][${requestId}] Email ADMIN newsletter envoyé avec succès`
-      );
     } else {
       console.warn(
         `[NEWSLETTER][${requestId}] Aucun admin dans ADMIN_MAILS, email newsletter non envoyé`
@@ -439,7 +452,7 @@ app.post("/api/newsletter", async (req, res) => {
 });
 
 // Lancer le serveur
-const port = PORT || 5000;
+const port = PORT || 10000;
 app.listen(port, () => {
-  console.log(`🚀 Backend API démarré sur http://localhost:${port}`);
+  console.log(`🚀 Backend API (Brevo HTTP) démarré sur http://localhost:${port}`);
 });
