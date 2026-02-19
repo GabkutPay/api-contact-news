@@ -78,10 +78,31 @@ app.post("/api/contact", async (req, res) => {
   console.log(`[CONTACT][${requestId}] Body:`, req.body);
 
   try {
-    const { nom, prenom, email, type, message } = req.body || {};
+    // On récupère les champs possibles
+    const {
+      nom,
+      prenom,
+      email,
+      type,
+      message,
+      newsletter,
+      name,
+      subject,
+      phone,
+    } = req.body || {};
+
+    // Mapping name -> nom/prenom si besoin
+    let finalNom = nom;
+    let finalPrenom = prenom;
+
+    if ((!finalNom || !finalPrenom) && name) {
+      const parts = name.trim().split(" ");
+      finalPrenom = finalPrenom || parts[0] || "";
+      finalNom = finalNom || parts.slice(1).join(" ") || "";
+    }
 
     console.log(`[CONTACT][${requestId}] Validation des champs…`);
-    if (!nom || !prenom || !email || !message) {
+    if (!finalNom || !finalPrenom || !email || !message) {
       console.warn(
         `[CONTACT][${requestId}] Validation échouée: nom/prenom/email/message manquant`
       );
@@ -127,11 +148,17 @@ app.post("/api/contact", async (req, res) => {
               <p style="margin:0 0 6px;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:#9ca3af;">
                 Coordonnées du demandeur
               </p>
-              <p style="margin:2px 0;font-size:13px;color:#e5e7eb;"><strong>Nom :</strong> ${nom}</p>
-              <p style="margin:2px 0;font-size:13px;color:#e5e7eb;"><strong>Prénom :</strong> ${prenom}</p>
+              <p style="margin:2px 0;font-size:13px;color:#e5e7eb;"><strong>Nom :</strong> ${finalNom}</p>
+              <p style="margin:2px 0;font-size:13px;color:#e5e7eb;"><strong>Prénom :</strong> ${finalPrenom}</p>
               <p style="margin:2px 0;font-size:13px;color:#e5e7eb;"><strong>Email :</strong> ${email}</p>
               <p style="margin:2px 0;font-size:13px;color:#e5e7eb;">
-                <strong>Type de demande :</strong> ${type || "Non précisé"}
+                <strong>Type de demande :</strong> ${type || subject || "Non précisé"}
+              </p>
+              <p style="margin:2px 0;font-size:13px;color:#e5e7eb;">
+                <strong>Téléphone :</strong> ${phone || "Non précisé"}
+              </p>
+              <p style="margin:2px 0;font-size:13px;color:#e5e7eb;">
+                <strong>Newsletter :</strong> ${newsletter ? "Oui" : "Non"}
               </p>
             </div>
 
@@ -181,16 +208,16 @@ app.post("/api/contact", async (req, res) => {
               Accusé de réception
             </p>
             <h1 style="margin:6px 0 0;font-size:20px;color:#f9fafb;font-weight:600;">
-              Merci pour votre message, ${prenom}
+              Merci pour votre message, ${finalPrenom || finalNom || "merci"}
             </h1>
           </div>
 
           <div style="padding:20px 24px;background:#ffffff;">
             <p style="margin:0 0 8px;font-size:14px;color:#111827;line-height:1.6;">
-              Bonjour ${prenom},
+              Bonjour ${finalPrenom || finalNom || ""},
             </p>
             <p style="margin:0 0 12px;font-size:14px;color:#111827;line-height:1.6;">
-              Merci de m&apos;avoir contacté. J&apos;ai bien reçu votre message et je reviendrai vers vous 
+              Merci de m'avoir contacté. J'ai bien reçu votre message et je reviendrai vers vous 
               dans les plus brefs délais pour échanger sur vos besoins en 
               <strong>réseaux, technique et maintenance</strong>.
             </p>
@@ -211,6 +238,19 @@ app.post("/api/contact", async (req, res) => {
                 <strong>graciakutala00@gmail.com</strong>.
               </p>
             </div>
+
+            ${
+              newsletter
+                ? `
+            <div style="margin-top:16px;padding:10px 12px;border-radius:10px;background:#ecfdf5;border:1px solid #bbf7d0;">
+              <p style="margin:0;font-size:12px;color:#166534;line-height:1.5;">
+                Vous avez également demandé à être informé(e) de mes prochaines
+                interventions et actualités par email. Merci pour votre confiance.
+              </p>
+            </div>
+            `
+                : ""
+            }
           </div>
 
           <div style="padding:14px 24px;border-top:1px solid #e5e7eb;background:#f9fafb;">
@@ -232,6 +272,51 @@ app.post("/api/contact", async (req, res) => {
       html: visitorHtml,
     });
     console.log(`[CONTACT][${requestId}] Email VISITEUR envoyé avec succès`);
+
+    // Si newsletter cochée, envoyer un email newsletter aux admins
+    if (newsletter) {
+      console.log(
+        `[CONTACT][${requestId}] Newsletter cochée, envoi info newsletter aux admins…`
+      );
+
+      const newsletterHtml = `
+        <div style="margin:0;padding:24px;background-color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;">
+          <div style="max-width:520px;margin:0 auto;background:#020617;border-radius:16px;overflow:hidden;box-shadow:0 24px 60px rgba(15,23,42,0.6);border:1px solid #1f2937;">
+            <div style="padding:18px 22px;background:radial-gradient(circle at top left,#22c55e,#0ea5e9);">
+              <p style="margin:0;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:#e5e7eb;opacity:.85;">
+                Nouvelle inscription newsletter (via formulaire contact)
+              </p>
+              <h1 style="margin:6px 0 0;font-size:18px;color:#f9fafb;font-weight:600;">
+                Portfolio technique – Gracia KUTALAKUDIMA
+              </h1>
+            </div>
+            <div style="padding:18px 22px;background:#020617;">
+              <p style="margin:0 0 10px;font-size:13px;color:#e5e7eb;">
+                Cette personne a coché la case newsletter dans le formulaire de contact :
+              </p>
+              <div style="margin-top:8px;padding:10px 12px;border-radius:10px;background:rgba(15,23,42,0.9);border:1px solid #1f2937;">
+                <p style="margin:0;font-size:13px;color:#fbbf24;font-weight:500;">${email}</p>
+                <p style="margin:6px 0 0;font-size:12px;color:#e5e7eb;">
+                  Nom complet : ${finalPrenom} ${finalNom}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+
+      if (adminList.length > 0) {
+        await transporter.sendMail({
+          from: `"${FROM_NAME || "Portfolio Gracia"}" <${FROM_EMAIL || SMTP_USER}>`,
+          to: adminList,
+          subject: "Newsletter (via contact) - Portfolio Gracia",
+          html: newsletterHtml,
+        });
+        console.log(
+          `[CONTACT][${requestId}] Email ADMIN newsletter (via contact) envoyé`
+        );
+      }
+    }
 
     console.log(`[CONTACT][${requestId}] Réponse 200 envoyée au client`);
     return res.json({ success: true });
